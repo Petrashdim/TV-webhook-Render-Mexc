@@ -184,25 +184,8 @@ def home():
         ]
     })
 
-# ---------------- Ping loop ----------------
-def ping_loop():
-    """Фоновая задача для self-ping чтобы сервер не засыпал"""
-    # ЗАМЕНИТЕ на ваш реальный URL после деплоя
-    PING_URL = "https://tv-webhook-render-mexc.onrender.com/health"
-    
-    while True:
-        try:
-            requests.get(PING_URL, timeout=5)
-            logger.info("🔄 Self-ping выполнен")
-        except Exception as e:
-            logger.warning(f"⚠️ Ping failed: {e}")
-        time.sleep(300)  # 5 минут
-
-# Запуск пинга в отдельном потоке (раскомментируйте после настройки URL)
-# ping_thread = threading.Thread(target=ping_loop, daemon=True)
-# ping_thread.start()
-
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    # Render использует переменную PORT
+    port = int(os.environ.get('PORT', 10000))
     logger.info(f"🚀 Запуск сервера на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
