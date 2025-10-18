@@ -25,8 +25,19 @@ class TradingBot:
     def calculate_position_size(self, current_price: float) -> float:
         """Расчет размера позиции на основе риска"""
         risk_amount = self.max_position_size * self.risk_per_trade
+        
+        # Добавляем проверку на минимальную цену
+        if current_price <= 0:
+            return 0
+            
         position_size = risk_amount / current_price
-        return round(position_size, 3)
+        
+        # Добавляем минимальный размер позиции
+        min_position = 0.001  # Минимум 0.001 монеты
+        if position_size < min_position:
+            position_size = min_position
+            
+        return round(position_size, 6)  # Округляем до 6 знаков
 
     def simulate_order(self, symbol: str, side: str, price: float, qty: float) -> Dict:
         """Симуляция ордера (заглушка вместо реального API)"""
