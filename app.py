@@ -7,7 +7,7 @@ import threading
 import os
 from flask import Flask, request, jsonify
 import logging
-from typing import Dict  # Добавляем импорт
+from typing import Dict
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -33,7 +33,6 @@ class TradingBot:
         try:
             logger.info(f"СИМУЛЯЦИЯ: {side} {qty} {symbol} по цене {price}")
             
-            # Здесь будет реальный вызов API биржи
             # Заглушка для демонстрации
             return {
                 "status": "success",
@@ -49,11 +48,9 @@ class TradingBot:
             logger.error(f"Ошибка симуляции ордера: {e}")
             return {"error": str(e)}
 
-    def process_tradingview_alert(self, alert_data: Dict) -> Dict:
+    def process_tradingview_alert(self, message: str) -> Dict:
         """Обработка алерта от TradingView"""
         try:
-            # Получаем сообщение от TradingView
-            message = alert_data.get('message', '')
             logger.info(f"Получено сообщение от TV: {message}")
             
             # Формат: BUY|SYMBOL|PRICE или SELL|SYMBOL|PRICE
@@ -110,16 +107,22 @@ bot = TradingBot()
 def tradingview_webhook():
     """Основной эндпоинт для вебхуков от TradingView"""
     try:
-        # Получаем данные от TradingView
-        data = request.get_json()
+        # TradingView отправляет plain text, а не JSON
+        if request.content_type == 'application/json':
+            data = request.get_json()
+            message = data.get('message', '') if data else ''
+        else:
+            # Получаем raw text от TradingView
+            message = request.get_data(as_text=True)
         
-        if not data:
-            return jsonify({"error": "No JSON data received"}), 400
-            
-        logger.info(f"📨 Получен вебхук: {data}")
+        logger.info(f"📨 Получен вебхук. Content-Type: {request.content_type}")
+        logger.info(f"📨 Сообщение: {message}")
+        
+        if not message:
+            return jsonify({"error": "No message received"}), 400
         
         # Обрабатываем алерт
-        result = bot.process_tradingview_alert(data)
+        result = bot.process_tradingview_alert(message)
         
         logger.info(f"✅ Результат обработки: {result}")
         return jsonify(result)
@@ -133,16 +136,24 @@ def test_webhook():
     """Тестовый эндпоинт для проверки вебхука"""
     if request.method == 'GET':
         return jsonify({
-            "message": "Send POST request with JSON data",
-            "example": {
-                "message": "BUY|BTCUSDT|50000"
+            "message": "Send POST request with data",
+            "examples": {
+                "json": '{"message": "BUY|BTCUSDT|50000"}',
+                "plain_text": "BUY|BTCUSDT|50000"
             }
         })
     
-    data = request.get_json()
+    # Обрабатываем оба формата
+    if request.content_type == 'application/json':
+        data = request.get_json()
+        message = data.get('message', '') if data else ''
+    else:
+        message = request.get_data(as_text=True)
+    
     return jsonify({
         "status": "test_received",
-        "your_data": data,
+        "content_type": request.content_type,
+        "message": message,
         "timestamp": time.time()
     })
 
@@ -167,9 +178,10 @@ def home():
         "version": "1.0",
         "status": "running",
         "usage": "Send POST requests to /webhook/tradingview",
-        "example": {
-            "message": "BUY|BTCUSDT|50000"
-        }
+        "supported_formats": [
+            "application/json: {'message': 'BUY|SYMBOL|PRICE'}",
+            "text/plain: BUY|SYMBOL|PRICE"
+        ]
     })
 
 # ---------------- Ping loop ----------------
