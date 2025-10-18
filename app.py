@@ -106,14 +106,21 @@ class MexcTradingBot:
             
             params['signature'] = signature
             
+            # MEXC требует application/x-www-form-urlencoded, а не JSON
             headers = {
                 'X-MEXC-APIKEY': self.api_key,
-                'Content-Type': 'application/x-www-form-urlencoded'
+                'Content-Type': 'application/x-www-form-urlencoded'  # ← ИСПРАВЛЕНО
             }
             
             logger.info(f"📤 Отправка лимитного ордера: {side} {qty} {symbol} по {order_price}")
             
-            response = requests.post(endpoint, data=params, headers=headers, timeout=10)
+            # Отправляем как form data, а не JSON
+            response = requests.post(
+                endpoint, 
+                data=params,  # ← ИСПРАВЛЕНО (не json=)
+                headers=headers, 
+                timeout=10
+            )
             
             if response.status_code == 200:
                 result = response.json()
