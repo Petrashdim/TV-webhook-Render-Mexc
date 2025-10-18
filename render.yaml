@@ -1,11 +1,14 @@
 services:
   - type: web
-    name: tradingview-webhook-bot
+    name: tv-webhook-bot-v2
     env: python
     plan: free
-    branch: main
     buildCommand: pip install -r requirements.txt
     startCommand: python app.py
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.0
+      - key: MEXC_API_KEY
+        sync: false
+      - key: MEXC_API_SECRET  
+        sync: false
