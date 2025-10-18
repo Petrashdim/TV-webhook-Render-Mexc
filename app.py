@@ -108,12 +108,12 @@ class MexcTradingBot:
             
             headers = {
                 'X-MEXC-APIKEY': self.api_key,
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/x-www-form-urlencoded'
             }
             
             logger.info(f"📤 Отправка лимитного ордера: {side} {qty} {symbol} по {order_price}")
             
-            response = requests.post(endpoint, json=params, headers=headers, timeout=10)
+            response = requests.post(endpoint, data=params, headers=headers, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
