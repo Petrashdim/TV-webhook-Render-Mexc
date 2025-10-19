@@ -5,9 +5,11 @@ import requests
 import time
 import threading
 import os
+import csv
 from flask import Flask, request, jsonify
 import logging
 from typing import Dict
+from datetime import datetime
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -20,12 +22,47 @@ class MexcTradingBot:
         self.api_key = os.getenv('MEXC_API_KEY', '')
         self.api_secret = os.getenv('MEXC_API_SECRET', '')
         
+        # CSV лог
+        self.csv_path = "trade_log.csv"
+        self.init_csv()
+        
         if not self.api_key or not self.api_secret:
             logger.warning("⚠️ API ключи не настроены. Используется симуляция.")
             self.simulation_mode = True
         else:
             logger.info("✅ Режим реальных ордеров MEXC")
             self.simulation_mode = False
+
+    def init_csv(self):
+        """Инициализация CSV файла"""
+        if not os.path.exists(self.csv_path):
+            with open(self.csv_path, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    "timestamp", "symbol", "action", "strategy_price", 
+                    "order_price", "quantity", "bid", "ask", "status", "message"
+                ])
+
+    def log_trade(self, symbol: str, action: str, strategy_price: float, order_price: float, 
+                 quantity: float, bid: float, ask: float, status: str, message: str):
+        """Запись сделки в CSV"""
+        try:
+            with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    datetime.now().isoformat(),
+                    symbol,
+                    action,
+                    strategy_price,
+                    order_price,
+                    quantity,
+                    bid,
+                    ask,
+                    status,
+                    message
+                ])
+        except Exception as e:
+            logger.error(f"Ошибка записи в CSV: {e}")
 
     def get_current_prices(self, symbol: str) -> Dict:
         """Получение текущих цен bid/ask"""
@@ -47,25 +84,10 @@ class MexcTradingBot:
             logger.error(f"Ошибка получения цен: {e}")
             return {'bid': 0, 'ask': 0}
 
-    def calculate_quantity(self, size_usdt: float, price: float) -> float:
-        """Расчет количества на основе размера в USDT и цены"""
-        if price <= 0:
-            return 0
-            
-        quantity = size_usdt / price
-        
-        # МИНИМАЛЬНЫЙ ОБЪЕМ MEXC: 1 USDT
-        min_usdt_value = 1.0
-        if size_usdt < min_usdt_value:
-            logger.warning(f"⚠️ Размер меньше минимального: {size_usdt} USDT < {min_usdt_value} USDT")
-            return min_usdt_value / price
-            
-        return round(quantity, 6)
-
-    def place_real_order(self, symbol: str, side: str, size_usdt: float) -> Dict:
-        """Размещение лимитного ордера - цена определяется биржей"""
+    def place_real_order(self, symbol: str, side: str, quantity: float, strategy_price: float) -> Dict:
+        """Размещение реального ордера"""
         try:
-            # Получаем текущие цены с биржи
+            # Получаем текущие цены для ордера и логов
             prices = self.get_current_prices(symbol)
             current_bid = prices.get('bid', 0)
             current_ask = prices.get('ask', 0)
@@ -75,29 +97,23 @@ class MexcTradingBot:
             
             # Определяем цену ордера
             if side.upper() == "BUY":
-                order_price = current_ask  # Покупаем по цене аск
-                order_type = "BUY (market price)"
+                order_price = current_ask  # Покупаем по аску
+                order_type = "BUY"
             else:
-                order_price = current_bid  # Продаем по цене бид
-                order_type = "SELL (market price)"
+                order_price = current_bid  # Продаем по биду
+                order_type = "SELL"
             
-            # Расчет количества
-            quantity = self.calculate_quantity(size_usdt, order_price)
-            
-            if quantity <= 0:
-                return {"error": "Неверный расчет количества"}
-            
-            logger.info(f"💰 {order_type}: price={order_price}, size={size_usdt} USDT, quantity={quantity}")
-            logger.info(f"💰 Market: bid={current_bid}, ask={current_ask}")
-            
-            # Проверяем минимальный объем
+            # Проверяем минимальный объем (1 USDT)
             order_value = quantity * order_price
             min_usdt_value = 1.0
+            
             if order_value < min_usdt_value:
                 logger.warning(f"⚠️ Объем меньше минимального: {order_value:.2f} USDT")
-                # Корректируем количество
-                quantity = min_usdt_value / order_price
-                logger.info(f"🔄 Автокоррекция количества: {quantity:.6f}")
+                # Не корректируем количество - пусть TradingView контролирует
+                return {"error": f"Объем меньше минимального: {order_value:.2f} USDT < {min_usdt_value} USDT"}
+            
+            logger.info(f"💰 {order_type}: strategy_price={strategy_price}, order_price={order_price}, quantity={quantity}")
+            logger.info(f"💰 Market: bid={current_bid}, ask={current_ask}")
             
             # Формируем ордер
             timestamp = str(int(time.time() * 1000))
@@ -128,96 +144,91 @@ class MexcTradingBot:
                 'X-MEXC-APIKEY': self.api_key
             }
             
-            logger.info(f"📤 Отправка лимитного ордера: {side} {quantity} {symbol} по {order_price}")
+            logger.info(f"📤 Отправка ордера: {side} {quantity} {symbol} по {order_price}")
             
             # Отправляем запрос
             response = requests.post(url, headers=headers, timeout=10)
             
             if response.status_code == 200:
                 result = response.json()
-                logger.info(f"✅ Лимитный ордер размещен: {result}")
+                logger.info(f"✅ Ордер размещен: {result}")
+                
+                # Логируем успешный ордер
+                self.log_trade(
+                    symbol=symbol,
+                    action=side.upper(),
+                    strategy_price=strategy_price,
+                    order_price=order_price,
+                    quantity=quantity,
+                    bid=current_bid,
+                    ask=current_ask,
+                    status="SUCCESS",
+                    message=f"Order {result.get('orderId', '')}"
+                )
+                
                 return {"status": "success", "real_order": result}
             else:
                 error_msg = f"❌ MEXC API error: {response.status_code} - {response.text}"
                 logger.error(error_msg)
+                
+                # Логируем ошибку
+                self.log_trade(
+                    symbol=symbol,
+                    action=side.upper(),
+                    strategy_price=strategy_price,
+                    order_price=order_price,
+                    quantity=quantity,
+                    bid=current_bid,
+                    ask=current_ask,
+                    status="ERROR",
+                    message=error_msg
+                )
+                
                 return {"error": error_msg}
             
         except Exception as e:
-            logger.error(f"❌ Ошибка реального ордера: {e}")
-            return {"error": str(e)}
-
-    def simulate_order(self, symbol: str, side: str, size_usdt: float) -> Dict:
-        """Симуляция ордера"""
-        prices = self.get_current_prices(symbol)
-        current_bid = prices.get('bid', 0)
-        current_ask = prices.get('ask', 0)
-        
-        if side.upper() == "BUY":
-            order_price = current_ask
-        else:
-            order_price = current_bid
-            
-        quantity = self.calculate_quantity(size_usdt, order_price)
-        
-        logger.info(f"🎮 СИМУЛЯЦИЯ: {side} {quantity} {symbol} по {order_price} (size: {size_usdt} USDT)")
-        logger.info(f"🎮 Market: bid={current_bid}, ask={current_ask}")
-        
-        return {
-            "status": "success",
-            "order_id": f"SIM_{int(time.time())}",
-            "symbol": symbol,
-            "side": side,
-            "price": order_price,
-            "quantity": quantity,
-            "size_usdt": size_usdt,
-            "timestamp": time.time(),
-            "note": "Симуляционный ордер"
-        }
-
-    def place_order(self, symbol: str, side: str, size_usdt: float) -> Dict:
-        """Общая функция размещения ордера"""
-        if self.simulation_mode:
-            return self.simulate_order(symbol, side, size_usdt)
-        else:
-            return self.place_real_order(symbol, side, size_usdt)
+            error_msg = f"❌ Ошибка ордера: {e}"
+            logger.error(error_msg)
+            return {"error": error_msg}
 
     def process_tradingview_alert(self, message: str) -> Dict:
-        """Обработка алерта от TradingView - новый формат"""
+        """Обработка алерта от TradingView - новый формат с количеством в монетах"""
         try:
             logger.info(f"📨 Получено сообщение от TV: {message}")
             
-            # НОВЫЙ ФОРМАТ: ACTION:SYMBOL:SIZE_USDT
+            # ФОРМАТ: ACTION:SYMBOL:QUANTITY:STRATEGY_PRICE
             parts = message.split(':')
             
-            if len(parts) < 3:
+            if len(parts) < 4:
                 return {"error": "Неверный формат сообщения", "received": message}
                 
             action = parts[0].strip().upper()
             symbol = parts[1].strip().upper()
-            size_usdt = float(parts[2].strip())  # Размер в USDT
+            quantity = float(parts[2].strip())  # Количество в монетах
+            strategy_price = float(parts[3].strip())  # Цена срабатывания стратегии
             
-            logger.info(f"🔍 Обработка алерта: {action} {symbol} размер {size_usdt} USDT")
+            logger.info(f"🔍 Обработка: {action} {symbol} qty={quantity} strategy_price={strategy_price}")
             
-            if size_usdt <= 0:
-                return {"error": "Неверный размер позиции"}
+            if quantity <= 0:
+                return {"error": "Неверное количество"}
             
             if action == "BUY":
-                result = self.place_order(symbol, "BUY", size_usdt)
+                result = self.place_real_order(symbol, "BUY", quantity, strategy_price)
                 return {
                     "status": "buy_order_placed", 
                     "symbol": symbol,
-                    "size_usdt": size_usdt,
-                    "mode": "REAL" if not self.simulation_mode else "SIMULATION",
+                    "quantity": quantity,
+                    "strategy_price": strategy_price,
                     "result": result
                 }
                 
             elif action == "SELL":
-                result = self.place_order(symbol, "SELL", size_usdt)
+                result = self.place_real_order(symbol, "SELL", quantity, strategy_price)
                 return {
                     "status": "sell_order_placed", 
                     "symbol": symbol,
-                    "size_usdt": size_usdt,
-                    "mode": "REAL" if not self.simulation_mode else "SIMULATION",
+                    "quantity": quantity,
+                    "strategy_price": strategy_price,
                     "result": result
                 }
                 
@@ -241,60 +252,35 @@ def tradingview_webhook():
         else:
             message = request.get_data(as_text=True)
         
-        logger.info(f"🌐 Получен вебхук. Content-Type: {request.content_type}")
-        logger.info(f"💬 Сообщение: {message}")
+        logger.info(f"🌐 Получен вебхук: {message}")
         
         if not message:
             return jsonify({"error": "No message received"}), 400
         
         result = bot.process_tradingview_alert(message)
         
-        logger.info(f"📊 Результат обработки: {result}")
+        logger.info(f"📊 Результат: {result}")
         return jsonify(result)
         
     except Exception as e:
-        logger.error(f"💥 Ошибка обработки вебхука: {e}")
+        logger.error(f"💥 Ошибка вебхука: {e}")
         return jsonify({"error": str(e)}), 500
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    return jsonify({
-        "status": "active", 
-        "service": "TradingView Webhook Bot",
-        "mode": "REAL" if not bot.simulation_mode else "SIMULATION",
-        "timestamp": time.time()
-    })
+@app.route('/logs')
+def get_logs():
+    """Получение логов"""
+    try:
+        if not os.path.exists(bot.csv_path):
+            return jsonify({"error": "No logs yet"})
+        
+        with open(bot.csv_path, "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
-@app.route('/')
-def home():
-    return jsonify({
-        "service": "TradingView Webhook Bot for MEXC",
-        "version": "3.0",
-        "mode": "REAL" if not bot.simulation_mode else "SIMULATION",
-        "message_format": "ACTION:SYMBOL:SIZE_USDT",
-        "examples": [
-            "BUY:XRPUSDT:10",
-            "SELL:BTCUSDT:50"
-        ]
-    })
-
-# ---------------- Ping loop ----------------
-def ping_loop():
-    PING_URL = "https://tv-webhook-render-mexc.onrender.com/health"
-    
-    while True:
-        try:
-            requests.get(PING_URL, timeout=5)
-            logger.info("🔄 Self-ping выполнен")
-        except Exception as e:
-            logger.warning(f"⚠️ Ping failed: {e}")
-        time.sleep(300)
-
-ping_thread = threading.Thread(target=ping_loop, daemon=True)
-ping_thread.start()
+# ... остальные роуты ...
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     logger.info(f"🚀 Запуск сервера на порту {port}")
-    logger.info(f"🔧 Режим: {'СИМУЛЯЦИЯ' if bot.simulation_mode else 'РЕАЛЬНЫЕ ОРДЕРА'}")
     app.run(host='0.0.0.0', port=port, debug=False)
