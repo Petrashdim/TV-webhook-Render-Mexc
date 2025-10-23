@@ -192,7 +192,7 @@ class MexcTradingBot:
             return {"error": error_msg}
 
     def process_tradingview_alert(self, message: str) -> Dict:
-        """Обработка алерта от TradingView - новый формат с количеством в монетах"""
+        """Обработка алерта от TradingView"""
         try:
             logger.info(f"📨 Получено сообщение от TV: {message}")
             
@@ -279,64 +279,86 @@ def test_webhook():
 
 @app.route('/webhook/tradingview', methods=['POST', 'GET'])
 def tradingview_webhook():
-    """Основной эндпоинт для вебхуков от TradingView"""
+    """Основной эндпоинт для вебхуков от TradingView - УПРОЩЕННАЯ ВЕРСИЯ"""
     try:
-        # Логируем все детали запроса
-        logger.info(f"🌐 Получен запрос на /webhook/tradingview")
+        logger.info("=" * 50)
+        logger.info("🌐 НОВЫЙ ВЕБХУК ОТ TRADINGVIEW")
+        logger.info("=" * 50)
+        
+        # Логируем ВСЕ детали запроса
         logger.info(f"📦 Метод: {request.method}")
         logger.info(f"📦 Headers: {dict(request.headers)}")
         logger.info(f"📦 Content-Type: {request.content_type}")
+        logger.info(f"📦 Args: {request.args}")
+        logger.info(f"📦 Form: {request.form}")
         
-        if request.method == 'GET':
-            return jsonify({
-                "status": "webhook_is_ready",
-                "message": "Send POST request with your TradingView alert",
-                "example": {
-                    "message": "BUY:XRPUSDT:100:0.5"
-                }
-            })
-        
-        # Обработка POST запроса от TradingView
         message = ""
         
-        # TradingView отправляет JSON с полем 'message'
-        if request.content_type == 'application/json':
+        # ВАРИАНТ 1: JSON данные
+        if request.is_json:
             data = request.get_json()
             logger.info(f"📦 JSON данные: {data}")
             
-            if data and 'message' in data:
-                message = data['message']
-            elif data and 'text' in data:
-                message = data['text']
-            elif data:
-                # Если нет поля message, пробуем взять первое значение
-                first_key = next(iter(data.keys()))
-                message = data[first_key]
-        else:
-            # Если не JSON, берем как plain text
-            message = request.get_data(as_text=True).strip()
+            # Пробуем разные возможные поля
+            if data:
+                if 'message' in data:
+                    message = data['message']
+                elif 'text' in data:
+                    message = data['text']
+                elif 'alert' in data:
+                    message = data['alert']
+                elif 'data' in data:
+                    message = data['data']
+                else:
+                    # Берем первое значение если нет стандартных полей
+                    first_key = next(iter(data.keys())) if data else ""
+                    message = data.get(first_key, "")
         
-        logger.info(f"📨 Извлеченное сообщение: '{message}'")
+        # ВАРИАНТ 2: Form данные
+        elif request.form:
+            logger.info(f"📦 Form данные: {dict(request.form)}")
+            if 'message' in request.form:
+                message = request.form['message']
+            elif 'text' in request.form:
+                message = request.form['text']
+            else:
+                # Берем первое значение
+                first_key = next(iter(request.form.keys())) if request.form else ""
+                message = request.form.get(first_key, "")
+        
+        # ВАРИАНТ 3: Plain text (оригинальный работающий вариант)
+        else:
+            message = request.get_data(as_text=True).strip()
+            logger.info(f"📦 Raw text данные: '{message}'")
+        
+        logger.info(f"📨 ИТОГОВОЕ сообщение: '{message}'")
         
         if not message:
-            return jsonify({
-                "error": "No message received", 
-                "details": "Empty message body",
-                "content_type": request.content_type,
-                "data_received": request.get_data(as_text=True)
-            }), 400
+            error_response = {
+                "error": "No message received",
+                "details": {
+                    "content_type": request.content_type,
+                    "method": request.method,
+                    "raw_data": request.get_data(as_text=True),
+                    "json_available": request.is_json
+                }
+            }
+            logger.error(f"❌ {error_response}")
+            return jsonify(error_response), 400
         
+        # Обрабатываем сообщение
         result = bot.process_tradingview_alert(message)
         
         logger.info(f"📊 Результат обработки: {result}")
+        logger.info("=" * 50)
+        
         return jsonify(result)
         
     except Exception as e:
-        logger.error(f"💥 Ошибка вебхука: {e}")
+        logger.error(f"💥 КРИТИЧЕСКАЯ ОШИБКА ВЕБХУКА: {e}")
         return jsonify({
             "error": str(e), 
-            "type": type(e).__name__,
-            "content_type": request.content_type if request else "No request"
+            "type": type(e).__name__
         }), 500
 
 @app.route('/logs')
@@ -356,38 +378,26 @@ def get_logs():
     except Exception as e:
         return jsonify({"error": str(e)})
 
-@app.route('/clear-logs', methods=['POST'])
-def clear_logs():
-    """Очистка логов (для тестирования)"""
-    try:
-        if os.path.exists(bot.csv_path):
-            os.remove(bot.csv_path)
-        bot.init_csv()
-        return jsonify({"status": "logs_cleared"})
-    except Exception as e:
-        return jsonify({"error": str(e)})
-
-# Новый эндпоинт для прямого тестирования вебхука
-@app.route('/test-webhook-direct', methods=['POST'])
-def test_webhook_direct():
-    """Прямой тест вебхука с разными форматами"""
-    test_data = {
-        "message": "BUY:XRPUSDT:100:0.5"
+@app.route('/debug-webhook', methods=['POST'])
+def debug_webhook():
+    """Специальный эндпоинт для отладки - показывает что именно приходит"""
+    debug_info = {
+        "timestamp": datetime.now().isoformat(),
+        "method": request.method,
+        "headers": dict(request.headers),
+        "content_type": request.content_type,
+        "args": dict(request.args),
+        "form": dict(request.form),
+        "json": request.get_json() if request.is_json else None,
+        "raw_data": request.get_data(as_text=True),
+        "is_json": request.is_json
     }
     
-    # Имитируем запрос от TradingView
-    with app.test_client() as client:
-        response = client.post('/webhook/tradingview', 
-                             json=test_data,
-                             content_type='application/json')
+    logger.info(f"🐛 DEBUG INFO: {json.dumps(debug_info, indent=2)}")
     
-    return jsonify({
-        "test_request": test_data,
-        "test_response": response.get_json()
-    })
+    return jsonify(debug_info)
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     logger.info(f"🚀 Запуск сервера на порту {port}")
     app.run(host='0.0.0.0', port=port, debug=False)
-    
