@@ -242,20 +242,70 @@ class MexcTradingBot:
 # Инициализация бота
 bot = MexcTradingBot()
 
-@app.route('/webhook/tradingview', methods=['POST'])
+@app.route('/')
+def home():
+    """Корневой эндпоинт для проверки работы сервера"""
+    return jsonify({
+        "status": "online",
+        "service": "TradingView Webhook to MEXC",
+        "timestamp": datetime.now().isoformat(),
+        "endpoints": {
+            "webhook": "/webhook/tradingview (POST)",
+            "logs": "/logs (GET)",
+            "health": "/health (GET)",
+            "test": "/test (GET)"
+        }
+    })
+
+@app.route('/health')
+def health_check():
+    """Проверка здоровья сервера"""
+    return jsonify({
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "simulation_mode": bot.simulation_mode
+    })
+
+@app.route('/test')
+def test_webhook():
+    """Тестовый эндпоинт для проверки вебхука"""
+    test_message = "BUY:XRPUSDT:100:0.5"
+    result = bot.process_tradingview_alert(test_message)
+    return jsonify({
+        "test": "completed",
+        "message": test_message,
+        "result": result
+    })
+
+@app.route('/webhook/tradingview', methods=['POST', 'GET'])
 def tradingview_webhook():
     """Основной эндпоинт для вебхуков от TradingView"""
     try:
+        # Логируем все детали запроса
+        logger.info(f"🌐 Получен запрос на /webhook/tradingview")
+        logger.info(f"📦 Метод: {request.method}")
+        logger.info(f"📦 Headers: {dict(request.headers)}")
+        logger.info(f"📦 Content-Type: {request.content_type}")
+        
+        if request.method == 'GET':
+            return jsonify({
+                "status": "webhook_is_ready",
+                "message": "Send POST request with your TradingView alert"
+            })
+        
+        # Обработка POST запроса
         if request.content_type == 'application/json':
             data = request.get_json()
+            logger.info(f"📦 JSON данные: {data}")
             message = data.get('message', '') if data else ''
         else:
             message = request.get_data(as_text=True)
+            logger.info(f"📦 Text данные: {message}")
         
-        logger.info(f"🌐 Получен вебхук: {message}")
+        logger.info(f"📨 Получен вебхук: {message}")
         
         if not message:
-            return jsonify({"error": "No message received"}), 400
+            return jsonify({"error": "No message received", "details": "Empty message body"}), 400
         
         result = bot.process_tradingview_alert(message)
         
@@ -264,7 +314,7 @@ def tradingview_webhook():
         
     except Exception as e:
         logger.error(f"💥 Ошибка вебхука: {e}")
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": str(e), "type": type(e).__name__}), 500
 
 @app.route('/logs')
 def get_logs():
@@ -273,12 +323,26 @@ def get_logs():
         if not os.path.exists(bot.csv_path):
             return jsonify({"error": "No logs yet"})
         
+        logs = []
         with open(bot.csv_path, "r", encoding="utf-8") as f:
-            return f.read()
+            reader = csv.DictReader(f)
+            for row in reader:
+                logs.append(row)
+        
+        return jsonify({"logs": logs, "count": len(logs)})
     except Exception as e:
         return jsonify({"error": str(e)})
 
-# ... остальные роуты ...
+@app.route('/clear-logs', methods=['POST'])
+def clear_logs():
+    """Очистка логов (для тестирования)"""
+    try:
+        if os.path.exists(bot.csv_path):
+            os.remove(bot.csv_path)
+        bot.init_csv()
+        return jsonify({"status": "logs_cleared"})
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
