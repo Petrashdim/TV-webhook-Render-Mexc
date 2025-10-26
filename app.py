@@ -397,6 +397,21 @@ def debug_webhook():
     
     return jsonify(debug_info)
 
+# ---------------- Ping loop ----------------
+def ping_loop():
+    PING_URL = "https://tv-webhook-render-mexc.onrender.com/health"
+    
+    while True:
+        try:
+            requests.get(PING_URL, timeout=5)
+            logger.info("🔄 Self-ping выполнен")
+        except Exception as e:
+            logger.warning(f"⚠️ Ping failed: {e}")
+        time.sleep(300)
+
+ping_thread = threading.Thread(target=ping_loop, daemon=True)
+ping_thread.start()
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
     logger.info(f"🚀 Запуск сервера на порту {port}")
