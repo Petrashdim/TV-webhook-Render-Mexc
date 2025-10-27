@@ -403,11 +403,11 @@ def ping_loop():
     
     while True:
         try:
-            requests.get(PING_URL, timeout=5)
+            requests.get(PING_URL, timeout=3)
             logger.info("🔄 Self-ping выполнен")
         except Exception as e:
             logger.warning(f"⚠️ Ping failed: {e}")
-        time.sleep(300)
+        time.sleep(180)
 
 ping_thread = threading.Thread(target=ping_loop, daemon=True)
 ping_thread.start()
